@@ -1,0 +1,113 @@
+name: codecoverage-store
+description: "Update code coverage badge data"
+inputs:
+  coverage:
+    required: true
+    type: string
+    default: "0%"
+  repo_name:
+    required: true
+    type: string
+    default: "NA"
+  color:
+    required: false
+    type: string
+    default: "auto"
+  pat_token:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Calculate badge color if not provided
+      shell: bash
+      if: ${{ !inputs.color || inputs.color == 'auto' }}
+      id: calculate-color
+      run: |
+        # Extract number from coverage percentage (remove the % sign)
+        COVERAGE_NUM=$(echo "${{ inputs.coverage }}" | sed 's/%//')
+        
+        # Determine color based on coverage percentage
+        if (( $(echo "$COVERAGE_NUM >= 90" | bc -l) )); then
+          echo "badge_color=brightgreen" >> $GITHUB_ENV
+        elif (( $(echo "$COVERAGE_NUM >= 80" | bc -l) )); then
+          echo "badge_color=green" >> $GITHUB_ENV
+        elif (( $(echo "$COVERAGE_NUM >= 70" | bc -l) )); then
+          echo "badge_color=yellowgreen" >> $GITHUB_ENV
+        elif (( $(echo "$COVERAGE_NUM >= 60" | bc -l) )); then
+          echo "badge_color=yellow" >> $GITHUB_ENV
+        elif (( $(echo "$COVERAGE_NUM >= 50" | bc -l) )); then
+          echo "badge_color=orange" >> $GITHUB_ENV
+        else
+          echo "badge_color=red" >> $GITHUB_ENV
+        fi
+    
+    - name: Set badge color from input if provided
+      shell: bash
+      if: ${{ inputs.color && inputs.color != 'auto' }}
+      run: echo "badge_color=${{ inputs.color }}" >> $GITHUB_ENV
+    
+    - name: Create badge JSON content
+      shell: bash
+      id: create-content
+      run: |
+        # Create badge content and encode to base64
+        BADGE_CONTENT=$(cat <<EOF
+        {
+          "schemaVersion": 1,
+          "label": "coverage",
+          "message": "${{ inputs.coverage }}",
+          "color": "${{ env.badge_color }}"
+        }
+        EOF
+        )
+        
+        # Encode content to base64 (required by GitHub API) - cross-platform version
+        # Using pipe to tr to remove newlines instead of -w option
+        ENCODED_CONTENT=$(echo -n "$BADGE_CONTENT" | base64 | tr -d '\n')
+        echo "encoded_content=$ENCODED_CONTENT" >> $GITHUB_ENV
+    
+    - name: Check if file exists
+      shell: bash
+      id: check-file
+      run: |
+        FILE_INFO=$(curl -s -H "Authorization: token ${{ inputs.pat_token }}" \
+          https://api.github.com/repos/Archie-Louis-Ventures/badge-storage/contents/codecov-${{ inputs.repo_name }}.json)
+        
+        if echo "$FILE_INFO" | grep -q "sha"; then
+          # File exists, get its SHA
+          SHA=$(echo "$FILE_INFO" | jq -r .sha)
+          echo "file_exists=true" >> $GITHUB_ENV
+          echo "file_sha=$SHA" >> $GITHUB_ENV
+        else
+          echo "file_exists=false" >> $GITHUB_ENV
+        fi
+    
+    - name: Update existing badge file
+      shell: bash
+      if: ${{ env.file_exists == 'true' }}
+      run: |
+        curl -X PUT -H "Authorization: token ${{ inputs.pat_token }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/Archie-Louis-Ventures/badge-storage/contents/codecov-${{ inputs.repo_name }}.json \
+          -d @- << EOF
+        {
+          "message": "Update code coverage badge for ${{ inputs.repo_name }} (${{ inputs.coverage }})",
+          "content": "${{ env.encoded_content }}",
+          "sha": "${{ env.file_sha }}"
+        }
+        EOF
+    
+    - name: Create new badge file
+      shell: bash
+      if: ${{ env.file_exists == 'false' }}
+      run: |
+        curl -X PUT -H "Authorization: token ${{ inputs.pat_token }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/repos/Archie-Louis-Ventures/badge-storage/contents/codecov-${{ inputs.repo_name }}.json \
+          -d @- << EOF
+        {
+          "message": "Create code coverage badge for ${{ inputs.repo_name }} (${{ inputs.coverage }})",
+          "content": "${{ env.encoded_content }}"
+        }
+        EOF
