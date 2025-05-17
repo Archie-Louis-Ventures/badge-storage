@@ -17,7 +17,6 @@ on:
     secrets:
       PAT_TOKEN:
         required: true
-        
   workflow_dispatch:
     inputs:
       coverage:
@@ -79,8 +78,9 @@ jobs:
           EOF
           )
           
-          # Encode content to base64 (required by GitHub API)
-          ENCODED_CONTENT=$(echo -n "$BADGE_CONTENT" | base64 -w 0)
+          # Encode content to base64 (required by GitHub API) - cross-platform version
+          # Using pipe to tr to remove newlines instead of -w option
+          ENCODED_CONTENT=$(echo -n "$BADGE_CONTENT" | base64 | tr -d '\n')
           echo "encoded_content=$ENCODED_CONTENT" >> $GITHUB_ENV
       
       - name: Check if file exists
